@@ -1,66 +1,32 @@
 var express = require('express');
-var cookieParser = require('cookie-parser');
-var bodyParser = require('body-parser');
-var session = require('express-session');
-var FitbitStrategy = require('./client/oauth').FitbitOAuth2Strategy;
-var passport = require('passport');
+var FitbitApiClient = require('./client/oauth');
+//var passport = require('passport');
 
-//var mongoose = require('mongoose'),
+//var mongoose = require('mongoose');
+//app.use(bodyParser());
 var app = express();
 
-app.use(cookieParser());
-app.use(bodyParser());
+// initialize the Fitbit API client
+var FitbitApiClient = require("fitbit-node"),
+    client = new FitbitApiClient("22828X", "d24dfc6f7bb64f374459e04747b67cf8");
 
-app.use(session({ secret: 'keyboard cat' }));
-
-app.use(passport.initialize());
-app.use(passport.session({
-  resave: false,
-  saveUninitialized: true
-}));
-
-const CLIENT_ID = '22828X';
-const CLIENT_SECRET = 'd24dfc6f7bb64f374459e04747b67cf8';
-
-app.use(passport.initialize());
-
-var fitbitStrategy = new FitbitStrategy({
-  clientID: CLIENT_ID,
-  clientSecret: CLIENT_SECRET,
-  scope: ['activity','heartrate','location','profile'],
-  callbackURL: "http://localhost:3000/auth/fitbit/callback"
-}, function(accessToken, refreshToken, profile, done) {
-  // TODO: save accessToken here for later use
-
-  done(null, {
-    accessToken: accessToken,
-    refreshToken: refreshToken,
-    profile: profile
-  });
-
+// redirect the user to the Fitbit authorization page
+app.get("/authorize", function (req, res) {
+    // request access to the user's activity, heartrate, location, nutrion, profile, settings, sleep, social, and weight scopes
+    res.redirect(client.getAuthorizeUrl('activity heartrate location nutrition profile settings sleep social weight', 'http://localhost:3000/auth/fitbit/callback'));
 });
 
-passport.use(fitbitStrategy);
-
-passport.serializeUser(function(user, done) {
-  done(null, user);
-});
-
-passport.deserializeUser(function(obj, done) {
-  done(null, obj);
-});
-
-var fitbitAuthenticate = passport.authenticate('fitbit', {
-  successRedirect: '/auth/fitbit/success',
-  failureRedirect: '/auth/fitbit/failure'
-});
-
-app.get('/auth/fitbit', fitbitAuthenticate);
-app.get('/auth/fitbit/callback', fitbitAuthenticate);
-
-app.get('/auth/fitbit/success', function(req, res, next) {
-  console.log("accessToken = " + req.user.accessToken);
-  res.send(req.user);
+// handle the callback from the Fitbit authorization flow
+app.get("/auth/fitbit/callback", function (req, res) {
+    // exchange the authorization code we just received for an access token
+    client.getAccessToken(req.query.code, 'http://localhost:3000/auth/fitbit/callback').then(function (result) {
+        // use the access token to fetch the user's profile information
+        client.get("/profile.json", result.access_token).then(function (results) {
+            res.send(results);
+        });
+    }).catch(function (error) {
+        res.send(error);
+    });
 });
 
 app.get('/', function (req, res) {
