@@ -1,138 +1,166 @@
-/**
- * Module dependencies.
- */
-var util = require('util')
-  , OAuth2Strategy = require('passport-oauth2')
-  , InternalOAuthError = require('passport-oauth2').InternalOAuthError;
+var OAuth2 = require('simple-oauth2'),
+    Q = require('q'),
+    Request = require('request');
 
-
-/**
- * `Strategy` constructor.
- *
- * The Fitbit authentication strategy authenticates requests by delegating to
- * Fitbit using the OAuth 2.0 protocol.
- *
- * Applications must supply a `verify` callback which accepts an `accessToken`,
- * `refreshToken` and service-specific `profile`, and then calls the `done`
- * callback supplying a `user`, which should be set to `false` if the
- * credentials are not valid.  If an exception occured, `err` should be set.
- *
- * Options:
- *   - `clientID`      your Fitbit application's client id
- *   - `clientSecret`  your Fitbit application's client secret
- *   - `callbackURL`   URL to which Fitbit will redirect the user after granting authorization
- *
- * Examples:
- *
- *     passport.use(new FitbitStrategy({
- *         clientID: '123-456-789',
- *         clientSecret: 'shhh-its-a-secret'
- *         callbackURL: 'https://www.example.net/auth/fitbit/callback'
- *       },
- *       function(accessToken, refreshToken, profile, done) {
- *         User.findOrCreate(..., function (err, user) {
- *           done(err, user);
- *         });
- *       }
- *     ));
- *
- * @param {Object} options
- * @param {Function} verify
- * @api public
- */
-function Strategy(options, verify) {
-  options = options || {};
-  options.authorizationURL = options.authorizationURL || 'https://www.fitbit.com/oauth2/authorize';
-  options.tokenURL = options.tokenURL || 'https://api.fitbit.com/oauth2/token';
-  options.scopeSeparator = options.scopeSeparator || ' ';
-  options.customHeaders = {
-    Authorization:  'Basic '+ new Buffer(options.clientID + ':' + options.clientSecret).toString('base64')
-  };
-
-  OAuth2Strategy.call(this, options, verify);
-  this.name = 'fitbit';
+function FitbitApiClient(clientID, clientSecret) {
+    this.oauth2 = OAuth2({
+        clientID: clientID,
+        clientSecret: clientSecret,
+        site: 'https://api.fitbit.com/',
+        authorizationPath: 'oauth2/authorize',
+        tokenPath: 'oauth2/token',
+        useBasicAuthorizationHeader: true
+    });
 }
 
-/**
- * Inherit from `OAuth2Strategy`.
- */
-util.inherits(Strategy, OAuth2Strategy);
+FitbitApiClient.prototype = {
+    getAuthorizeUrl: function (scope, redirectUrl) {
+        return this.oauth2.authCode.authorizeURL({
+            scope: scope,
+            redirect_uri: redirectUrl
+        }).replace('api', 'www');
+    },
 
-Strategy.prototype.authenticate = function(req, options) {
-  options || (options = {});
+    getAccessToken: function (code, redirectUrl) {
+        var deferred = Q.defer();
 
-  OAuth2Strategy.prototype.authenticate.call(this, req, options);
-};
+        this.oauth2.authCode.getToken({
+            code: code,
+            redirect_uri: redirectUrl
+        }, function (error, result) {
+            if (error) {
+                deferred.reject(error);
+            } else {
+                deferred.resolve(result);
+            }
+        });
 
-/**
- * Retrieve user profile from Fitbit.
- *
- * This function constructs a normalized profile, with the following properties:
- *
- *   - `provider`         always set to `fitbit`
- *   - `id`
- *   - `name`
- *   - `displayName`
- *   - `birthday`
- *   - `relationship`
- *   - `isPerson`
- *   - `isPlusUser`
- *   - `placesLived`
- *   - `language`
- *   - `emails`
- *   - `gender`
- *   - `picture`
- *
- * @param {String} accessToken
- * @param {Function} done
- * @api protected
- */
-Strategy.prototype.userProfile = function(accessToken, done) {
+        return deferred.promise;
+    },
 
-  this._oauth2.useAuthorizationHeaderforGET(true);
-  this._oauth2.get('https://api.fitbit.com/1/user/-/profile.json', accessToken, function (err, body, res) {
-    if (err) { return done(new InternalOAuthError('failed to fetch user profile', err)); }
+    refreshAccesstoken: function (accessToken, refreshToken, expiresIn) {
+        if(expiresIn === undefined) expiresIn = -1;
 
-    try {
-      var json = JSON.parse(body);
+        var deferred = Q.defer();
 
-      var profile = { provider: 'fitbit' };
-      profile.id = json.user.encodedId;
-      profile.displayName = json.user.displayName;
+        var token = this.oauth2.accessToken.create({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            expires_in: expiresIn
+        });
 
-      profile._json = json;
+        token.refresh(function (error, result) {
+            if (error) {
+                deferred.reject(error);
+            } else {
+                deferred.resolve(result.token);
+            }
+        });
 
-      done(null, profile);
-    } catch(e) {
-      done(e);
+        return deferred.promise;
+    },
+
+    get: function (path, accessToken, userId) {
+        var deferred = Q.defer();
+
+        Request({
+            url: getUrl(path, userId),
+            method: 'GET',
+            headers: {
+                Authorization: 'Bearer ' + accessToken
+            },
+            json: true
+        }, function(error, response, body) {
+            if (error) {
+                deferred.reject(error);
+            } else {
+                deferred.resolve([
+                    body,
+                    response
+                ]);
+            }
+        });
+
+        return deferred.promise;
+    },
+
+    post: function (path, accessToken, data, userId) {
+        var deferred = Q.defer();
+
+        Request({
+            url: getUrl(path, userId),
+            method: 'POST',
+            headers: {
+                Authorization: 'Bearer ' + accessToken
+            },
+            json: true,
+            body: data
+        }, function(error, response, body) {
+            if (error) {
+                deferred.reject(error);
+            } else {
+                deferred.resolve([
+                    body,
+                    response
+                ]);
+            }
+        });
+
+        return deferred.promise;
+    },
+
+    put: function (path, accessToken, data, userId) {
+        var deferred = Q.defer();
+
+        Request({
+            url: getUrl(path, userId),
+            method: 'PUT',
+            headers: {
+                Authorization: 'Bearer ' + accessToken
+            },
+            json: true,
+            body: data
+        }, function(error, response, body) {
+            if (error) {
+                deferred.reject(error);
+            } else {
+                deferred.resolve([
+                    body,
+                    response
+                ]);
+            }
+        });
+
+         return deferred.promise;
+    },
+
+    delete: function (path, accessToken, userId) {
+        var deferred = Q.defer();
+
+        Request({
+            url: getUrl(path, userId),
+            method: 'DELETE',
+            headers: {
+                Authorization: 'Bearer ' + accessToken
+            },
+            json: true
+        }, function(error, response, body) {
+            if (error) {
+                deferred.reject(error);
+            } else {
+                deferred.resolve([
+                    body,
+                    response
+                ]);
+            }
+        });
+
+        return deferred.promise;
     }
-  });
 };
 
-/**
- * Return extra parameters to be included in the request token
- * request.
- *
- * @param {Object} options
- * @return {Object}
- * @api protected
- */
-Strategy.prototype.authorizationParams = function(options) {
-  var params = options || {};
-
-  var scope = options.scope;
-  if (scope) {
-    params['scope'] = Array.isArray(scope) ? scope.join(' ') : scope;
-  }
-  return params;
+function getUrl(path, userId) {
+    return path = 'https://api.fitbit.com/1/user/' + (userId || '-') + path;
 }
 
-/**
- * Expose `Strategy` directly from package.
- */
-exports = module.exports = Strategy;
-
-/**
- * Export constructors.
- */
-exports.Strategy = Strategy;
+module.exports = FitbitApiClient;
