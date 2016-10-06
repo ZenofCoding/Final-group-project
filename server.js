@@ -1,10 +1,10 @@
 
 var express = require('express');
-  //  app               = express();
- //     bodyParser        = require('body-parser'),
-//    mongoose          = require('mongoose'),
+var   app               = express();
+var   bodyParser        = require('body-parser');
+//var    mongoose          = require('mongoose'),
   
-
+var FitbitApiClient = require('./client/oauth');
 
 //var mongoose = require('mongoose');
 //app.use(bodyParser());
