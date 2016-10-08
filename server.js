@@ -1,6 +1,10 @@
+
 var express = require('express');
+var   app               = express();
+//var   bodyParser        = require('body-parser');
+//var    mongoose          = require('mongoose'),
+  
 var FitbitApiClient = require('./client/oauth');
-//var passport = require('passport');
 
 //var mongoose = require('mongoose');
 //app.use(bodyParser());
@@ -30,7 +34,7 @@ app.get("/auth/fitbit/callback", function (req, res) {
 });
 
 app.get('/', function (req, res) {
-  res.sendfile(__dirname + '/client/views/index.html');
+  res.sendfile(__dirname + '/client/index.html');
 });
 
 app.use('/js', express.static(__dirname + '/client/js'));
